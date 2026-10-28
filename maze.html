@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>九九乘法迷宮對戰</title>
+<style>
+:root{--bg:#f6f5f1;--sf:#fff;--tx:#222;--mu:#777;--bd:#d8d6cf;--p0:#d9482b;--p1:#2b6cd9;--ac:#2a8f5a;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1b1b1a;--sf:#262625;--tx:#eee;--mu:#999;--bd:#444;--p0:#ff7a5c;--p1:#6fa3ff;--ac:#4cc487;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#1b1b1a;--sf:#262625;--tx:#eee;--mu:#999;--bd:#444;--p0:#ff7a5c;--p1:#6fa3ff;--ac:#4cc487;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.5 system-ui,-apple-system,"Noto Sans TC",sans-serif}
+main{max-width:560px;margin:0 auto;padding:14px}
+h1{font-size:20px;margin:0 0 10px}
+.box{background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:10px}
+button,select,input{font:inherit;color:var(--tx);background:var(--sf);border:1px solid var(--bd);border-radius:8px;padding:8px 12px}
+button{cursor:pointer}button:disabled{opacity:.4;cursor:default}
+button.main{background:var(--ac);color:#fff;border-color:var(--ac)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0}
+.mu{color:var(--mu);font-size:14px}
+canvas{width:100%;max-width:440px;display:block;margin:0 auto;background:var(--sf);border-radius:8px}
+.cards{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}
+.c{padding:4px 9px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);font-variant-numeric:tabular-nums}
+.c.sel{outline:2px solid var(--ac);background:var(--sf)}
+.c.won{border-style:dashed}
+.pad{display:grid;grid-template-columns:repeat(3,56px);gap:6px;justify-content:center;margin:8px 0}
+.pad button{height:48px;font-size:20px;padding:0}
+.t0{color:var(--p0);font-weight:600}.t1{color:var(--p1);font-weight:600}
+.big{font-size:18px;font-weight:600}
+</style>
+</head>
+<body>
+<main>
+<h1>🧮 九九乘法迷宮對戰</h1>
+
+<div id="lobby" class="box">
+  <div class="row"><button class="main" id="bSolo">🤖 單機測試（對電腦）</button></div>
+  <hr style="border:0;border-top:1px solid var(--bd)">
+  <div class="row"><input id="code" placeholder="房間代碼（英數字）" maxlength="12" size="14">
+  <button class="main" id="bHost">建立房間（房主）</button>
+  <button id="bJoin">加入房間</button></div>
+  <div class="mu">線上對戰：房主輸入代碼建立，另一位玩家輸入相同代碼加入。分享此頁時需給對方「可互動（Contributor）」以上權限。</div>
+  <div id="stat" class="mu"></div>
+</div>
+
+<div id="setup" class="box" hidden>
+  <div class="row"><span>每人手牌數：</span><select id="nsel"></select></div>
+  <div class="row"><span>相遇出牌時限：</span>
+    <select id="tsel"><option value="0">不限時</option><option value="15">15 秒</option><option value="30" selected>30 秒</option><option value="60">60 秒</option></select></div>
+  <div class="row"><label><input type="checkbox" id="tie" checked> 平手時牌退回雙方手中（不勾選則作廢）</label></div>
+  <div class="row"><button class="main" id="bStart" disabled>開始遊戲</button><span id="wait" class="mu">等待對手加入…</span></div>
+</div>
+
+<div id="game" hidden>
+  <div class="box" id="score"></div>
+  <canvas id="cv" width="440" height="440"></canvas>
+  <div class="pad">
+    <span></span><button data-d="0">▲</button><span></span>
+    <button data-d="3">◀</button><button data-d="2">▼</button><button data-d="1">▶</button>
+  </div>
+  <div class="box" id="fight" hidden></div>
+  <div class="box" id="hands"></div>
+</div>
+</main>
+
+<script>
+const N=10,$=id=>document.getElementById(id),cv=$('cv'),cx=cv.getContext('2d'),CELL=44;
+let room=null,isHost=false,bot=false,me=0,S=null,grid=null,gSeed=null,pick=[],use=[],myPick,myUse='',guestPeer=null,guestHere=false,tick=0,botWait=false,sent=0;
+const f=c=>(c/10|0)+'×'+c%10,v=c=>(c/10|0)*(c%10),R=a=>a[Math.random()*a.length|0];
+const rng=s=>()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296};
+const D=[[0,-1,1,4],[1,0,2,8],[0,1,4,1],[-1,0,8,2]];
+function maze(seed){const r=rng(seed),g=Array(N*N).fill(15),vis=new Set([0]),st=[0];
+  while(st.length){const c=st[st.length-1],x=c%N,y=c/N|0;
+    const o=D.filter(d=>{const a=x+d[0],b=y+d[1];return a>=0&&b>=0&&a<N&&b<N&&!vis.has(b*N+a)});
+    if(!o.length){st.pop();continue}
+    const d=o[r()*o.length|0],n=(y+d[1])*N+x+d[0];g[c]&=~d[2];g[n]&=~d[3];vis.add(n);st.push(n)}
+  for(let i=0;i<N*2;i++){const x=r()*(N-1)|0,y=r()*(N-1)|0;
+    if(r()<.5){g[y*N+x]&=~2;g[y*N+x+1]&=~8}else{g[y*N+x]&=~4;g[(y+1)*N+x]&=~1}}
+  return g}
+const shuffle=a=>{for(let i=a.length-1;i>0;i--){const j=Math.random()*(i+1)|0;[a[i],a[j]]=[a[j],a[i]]}return a};
+const allCards=()=>{const a=[];for(let i=1;i<=9;i++)for(let j=1;j<=9;j++)a.push(i*10+j);return a};
+const ITEM={x:'✖️2 加倍卡',s:'🛡️ 護盾卡',t:'⏱️ 加時卡'};
+const cnt=(a,k)=>a.filter(z=>z===k).length;
+const rm1=(a,k)=>{const i=a.indexOf(k);if(i>=0)a.splice(i,1)};
+const pn=i=>bot&&i===1?'電腦':'玩家'+(i+1);
+
+for(let i=3;i<=15;i++){const o=document.createElement('option');o.value=i;o.textContent=i+' 張';if(i==7)o.selected=true;$('nsel').appendChild(o)}
+
+/* ---------- connection ---------- */
+function toSetup(){$('lobby').hidden=true;$('setup').hidden=false;S={ph:'lobby',v:0}}
+$('bSolo').onclick=()=>{bot=true;isHost=true;me=0;toSetup();$('bStart').disabled=false;$('wait').textContent='單機模式：對手是電腦';
+  setInterval(botTick,450);setInterval(hostTick,1000)};
+async function enter(host){
+  const c=$('code').value.trim().toLowerCase().replace(/[^a-z0-9]/g,'');
+  if(!c){$('stat').textContent='請先輸入房間代碼';return}
+  $('stat').textContent='連線中…';
+  try{const Rm=await claude.use('room');
+    if(!Rm){$('stat').textContent='此頁面目前無法連線（需登入並開啟於 claude.ai）。';return}
+    room=await Rm.join('mc'+c)}catch(e){$('stat').textContent='連線失敗：'+(e.message||e.code);return}
+  isHost=host;me=host?0:1;
+  room.on('state',m=>{if(isHost||m.isMe)return;S=m.data;render()});
+  room.on('hello',m=>{if(!isHost||m.isMe)return;guestPeer=m.peer;guestHere=true;
+    if(S&&S.ph==='lobby'){$('bStart').disabled=false;$('wait').textContent='對手已加入，可以開始！'}push(true)});
+  room.on('act',m=>{if(!isHost||m.isMe||m.peer!==guestPeer)return;act(1,m.data)});
+  if(host){toSetup();setInterval(()=>push(true),2500);setInterval(hostTick,1000)}
+  else{$('stat').textContent='已加入，等待房主…';room.emit('hello',{});setInterval(()=>room.emit('hello',{}),3000)}
+}
+$('bHost').onclick=()=>enter(true);$('bJoin').onclick=()=>enter(false);
+function push(keep){if(!isHost)return;if(!keep)S.v++;if(room)room.emit('state',S)}
+function send(d){if(isHost)act(0,d);else room.emit('act',d)}
+
+/* ---------- host logic ---------- */
+$('bStart').onclick=()=>{
+  const n=+$('nsel').value,a=shuffle(allCards());
+  S={ph:'play',n,lim:+$('tsel').value,tie:$('tie').checked?1:0,seed:Math.random()*1e9|0,v:0,ch:[0,0],tl:null,res:null,arm:1,cs:[],lg:'遊戲開始！走到 🎁 寶箱格子可以開箱。',
+     p:[{x:0,y:0,h:a.slice(0,n),w:[],it:[]},{x:N-1,y:N-1,h:a.slice(n,n*2),w:[],it:[]}]};
+  pick=[];use=[];push();render()};
+const freeCard=()=>{const u=new Set();S.p.forEach(p=>p.h.concat(p.w).forEach(c=>u.add(c)));return R(allCards().filter(c=>!u.has(c))||[])};
+function openChest(i,idx){
+  S.cs.splice(idx,1);const p=S.p[i],r=Math.random();let t;
+  if(r<.5){const c=freeCard();if(c){p.h.push(c);t='乘式卡 '+f(c)}else{p.it.push('s');t=ITEM.s}}
+  else{const k=r<.68&&S.lim?'t':r<.85?'x':'s';p.it.push(k);t=ITEM[k]}
+  S.lg=pn(i)+' 開啟寶箱，獲得 '+t}
+function act(i,d){
+  if(!S||!S.p)return;const p=S.p[i];
+  if(d.t==='mv'&&S.ph==='play'){
+    const dd=D[d.d];if(!dd)return;
+    if(!grid||gSeed!==S.seed){grid=maze(S.seed);gSeed=S.seed}
+    const x=p.x+dd[0],y=p.y+dd[1];
+    if(x<0||y<0||x>=N||y>=N||grid[p.y*N+p.x]&dd[2])return;
+    p.x=x;p.y=y;
+    const k=S.cs.indexOf(y*N+x);if(k>=0)openChest(i,k);
+    const o=S.p[1-i];
+    if(o.x===x&&o.y===y){if(S.arm){S.ph='fight';S.ch=[0,0];S.tl=S.lim?[S.lim,S.lim]:null;pick=[undefined,undefined];use=['','']}}
+    else S.arm=1;
+    push();render();
+  }else if(d.t==='pk'&&S.ph==='fight'&&pick[i]===undefined){
+    if(d.c>=0&&!p.h.includes(d.c))return;
+    const u=d.c>=0&&d.u&&p.it.includes(d.u)&&d.u!=='t'?d.u:'';
+    pick[i]=d.c;use[i]=u;S.ch[i]=1;
+    if(pick[0]!==undefined&&pick[1]!==undefined)resolve();else{push();render()}
+  }else if(d.t==='tm'&&S.ph==='fight'&&S.tl&&pick[i]===undefined&&p.it.includes('t')){
+    rm1(p.it,'t');S.tl[i]+=15;push();render()}
+}
+function resolve(){
+  const [a,b]=pick;let t='';
+  if(a>=0&&b>=0){
+    [0,1].forEach(i=>{if(use[i])rm1(S.p[i].it,use[i])});
+    const va=v(a)*(use[0]==='x'?2:1),vb=v(b)*(use[1]==='x'?2:1),cs=[a,b];
+    const info=`（${va} vs ${vb}）`;
+    const gone=i=>{S.p[i].h=S.p[i].h.filter(c=>c!==cs[i])};
+    if(va===vb){t='平手！'+info+(S.tie?'牌退回雙方手中':'雙方的牌作廢');if(!S.tie){gone(0);gone(1)}}
+    else{const w=va>vb?0:1,l=1-w;gone(w);
+      if(use[l]==='s'){t=`${pn(w)} 贏了${info}，但${pn(l)} 的護盾保住了牌`}
+      else{gone(l);S.p[w].w.push(cs[l]);t=`${pn(w)} 勝！${info}贏得 ${f(cs[l])}`}}
+  }else{
+    t='有人選擇不對戰，不比牌；不對戰的一方隨機換掉一張手牌';
+    [0,1].forEach(i=>{if(pick[i]<0&&S.p[i].h.length){const n=freeCard();if(n)S.p[i].h[Math.random()*S.p[i].h.length|0]=n}})}
+  S.ph='res';S.arm=0;S.tl=null;S.res={c:[a,b],u:use.slice(),t};push();render();
+  setTimeout(()=>{S.ph=(!S.p[0].h.length||!S.p[1].h.length)?'end':'play';S.ch=[0,0];push();render()},4500)}
+function hostTick(){
+  if(!isHost||!S||!S.p)return;tick++;
+  if(S.ph==='fight'&&S.tl){
+    [0,1].forEach(i=>{if(pick[i]===undefined&&--S.tl[i]<=0){pick[i]=-1;use[i]='';S.ch[i]=1}});
+    if(pick[0]!==undefined&&pick[1]!==undefined)resolve();else{push();render()}}
+  if(S.ph==='play'&&tick%7===0&&S.cs.length<4){
+    const c=Math.random()*N*N|0;
+    if(!S.cs.includes(c)&&!S.p.some(p=>p.y*N+p.x===c)){S.cs.push(c);push();render()}}}
+/* ---------- bot ---------- */
+function bfs(from,goal){const prev=new Map([[from,-1]]),q=[from];
+  while(q.length){const c=q.shift();if(c===goal)break;const x=c%N,y=c/N|0;
+    D.forEach((d,k)=>{const nx=x+d[0],ny=y+d[1];if(nx<0||ny<0||nx>=N||ny>=N||grid[c]&d[2])return;const n=ny*N+nx;if(!prev.has(n)){prev.set(n,[c,k]);q.push(n)}})}
+  if(!prev.has(goal)||from===goal)return null;let c=goal,k=null;while(prev.get(c)!==-1){const e=prev.get(c);k=e[1];c=e[0]}return k}
+function botTick(){
+  if(!bot||!S||!S.p)return;const b=S.p[1];
+  if(S.ph==='play'){if(!grid||gSeed!==S.seed){grid=maze(S.seed);gSeed=S.seed}
+    const me0=S.p[0],g=S.cs.length&&Math.random()<.7?S.cs[0]:me0.y*N+me0.x,d=bfs(b.y*N+b.x,g);
+    if(d!==null&&Math.random()<.8)act(1,{t:'mv',d})}
+  else if(S.ph==='fight'&&pick[1]===undefined&&!botWait){botWait=true;
+    setTimeout(()=>{botWait=false;if(S.ph!=='fight'||pick[1]!==undefined)return;
+      const h=b.h;act(1,{t:'pk',c:Math.random()<.85&&h.length?R(h):-1,u:b.it.includes('x')&&Math.random()<.5?'x':''})},1500)}}
+
+/* ---------- rendering ---------- */
+const col=i=>getComputedStyle(document.documentElement).getPropertyValue(i?'--p1':'--p0').trim();
+function drawMaze(){
+  if(!grid||gSeed!==S.seed){grid=maze(S.seed);gSeed=S.seed}
+  cx.clearRect(0,0,440,440);cx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--tx').trim();cx.lineWidth=2;cx.lineCap='round';
+  cx.beginPath();
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){const g=grid[y*N+x],X=x*CELL,Y=y*CELL;
+    if(g&1){cx.moveTo(X,Y);cx.lineTo(X+CELL,Y)}
+    if(g&8){cx.moveTo(X,Y);cx.lineTo(X,Y+CELL)}
+    if(y===N-1&&g&4){cx.moveTo(X,Y+CELL);cx.lineTo(X+CELL,Y+CELL)}
+    if(x===N-1&&g&2){cx.moveTo(X+CELL,Y);cx.lineTo(X+CELL,Y+CELL)}}
+  cx.stroke();cx.textAlign='center';cx.textBaseline='middle';cx.font='22px sans-serif';
+  S.cs.forEach(c=>cx.fillText('🎁',(c%N)*CELL+CELL/2,(c/N|0)*CELL+CELL/2+1));
+  const same=S.p[0].x===S.p[1].x&&S.p[0].y===S.p[1].y;
+  S.p.forEach((p,i)=>{cx.fillStyle=col(i);cx.beginPath();
+    cx.arc(p.x*CELL+CELL/2+(same?(i?7:-7):0),p.y*CELL+CELL/2,CELL*.3,0,7);cx.fill();
+    cx.fillStyle='#fff';cx.font='bold 15px sans-serif';cx.fillText(i+1,p.x*CELL+CELL/2+(same?(i?7:-7):0),p.y*CELL+CELL/2+1)})}
+const cards=(a,cls='')=>a.map(c=>`<span class="c ${cls}">${f(c)}</span>`).join('')||'<span class="mu">（無）</span>';
+const items=a=>['x','s','t'].filter(k=>cnt(a,k)).map(k=>`${ITEM[k]}×${cnt(a,k)}`).join('　')||'（無）';
+function render(){
+  if(!S)return;
+  if(S.ph==='lobby'){if(!isHost)$('stat').textContent='已連上房間，等待房主開始…';return}
+  $('setup').hidden=true;$('lobby').hidden=true;$('game').hidden=false;drawMaze();
+  const nm=i=>`<span class="t${i}">${pn(i)}${i===me?'（你）':''}</span>`;
+  $('score').innerHTML=[0,1].map(i=>`${nm(i)}：贏得 <b>${S.p[i].w.length}</b> 張　手牌 ${S.p[i].h.length}　<span class="mu">${items(S.p[i].it)}</span>`).join('<br>')+
+    `<div class="mu">${S.lg||''}</div>`+(S.ph==='play'?'<div class="mu">方向鍵／按鈕移動；走到同一格即可對戰；🎁 為寶箱。</div>':'');
+  const mp=S.p[me],op=S.p[1-me];
+  $('hands').innerHTML=`<div class="mu">對手手牌（公開）</div><div class="cards">${cards(op.h)}</div>
+    <div class="mu">你的手牌</div><div class="cards">${cards(mp.h)}</div>
+    <div class="mu">你贏得的牌</div><div class="cards">${cards(mp.w,'won')}</div>`;
+  const F=$('fight');
+  if(S.ph==='fight'){
+    F.hidden=false;const done=S.ch[me];
+    const nx=cnt(mp.it,'x'),ns=cnt(mp.it,'s'),nt=cnt(mp.it,'t');
+    F.innerHTML=`<div class="big">⚔️ 相遇了！${S.tl?` <span class="t${me}">⏳ ${S.tl[me]} 秒</span>`:''}</div>
+      <div class="mu">選一張牌比乘積大小，或選擇不對戰（會隨機換掉你一張牌）。</div>
+      <div class="cards" id="pk">${mp.h.map(c=>`<span class="c ${myPick===c?'sel':''}" data-c="${c}" style="cursor:pointer">${f(c)}</span>`).join('')}</div>
+      <div class="row">${[['','不使用寶物'],['x','✖️2 加倍卡'+(nx?'':'（無）')],['s','🛡️ 護盾卡'+(ns?'':'（無）')]].map(([k,l])=>
+        `<label><input type="radio" name="u" value="${k}" ${myUse===k?'checked':''} ${done||(k==='x'&&!nx)||(k==='s'&&!ns)?'disabled':''}> ${l}</label>`).join('')}</div>
+      <div class="row"><button class="main" id="bPlay" ${done||myPick===undefined||myPick<0?'disabled':''}>出牌</button>
+      <button id="bPass" ${done?'disabled':''}>不對戰</button>
+      ${S.tl?`<button id="bTm" ${done||!nt?'disabled':''}>⏱️ 加時卡 +15 秒（${nt}）</button>`:''}</div>
+      <div class="mu">${done?'已送出，等待對手…':'對手'+(S.ch[1-me]?'已決定':'思考中…')}</div>`;
+    $('pk').onclick=e=>{const c=e.target.dataset.c;if(c&&!S.ch[me]){myPick=+c;render()}};
+    F.querySelectorAll('input[name=u]').forEach(r=>r.onchange=()=>{myUse=r.value});
+    $('bPlay').onclick=()=>{sent=1;send({t:'pk',c:myPick,u:myUse})};
+    $('bPass').onclick=()=>{myPick=-1;sent=1;send({t:'pk',c:-1,u:''})};
+    if($('bTm'))$('bTm').onclick=()=>send({t:'tm'});
+  }else if(S.ph==='res'){
+    myPick=undefined;myUse='';sent=0;F.hidden=false;
+    const [a,b]=S.res.c,sh=(c,u)=>c>=0?`${f(c)} = ${v(c)}${u==='x'?' ×2':''}${u==='s'?' 🛡️':''}`:'不對戰';
+    F.innerHTML=`<div class="big">結果</div><div><span class="t0">${pn(0)}：${sh(a,S.res.u[0])}</span>　vs　<span class="t1">${pn(1)}：${sh(b,S.res.u[1])}</span></div><div class="big">${S.res.t}</div><div class="mu">稍後繼續在迷宮中移動。</div>`;
+  }else if(S.ph==='end'){
+    F.hidden=false;const a=S.p[0].w.length,b=S.p[1].w.length;
+    F.innerHTML=`<div class="big">🏁 遊戲結束</div><div class="big">${a===b?'平手！':a>b?pn(0)+' 獲勝！':pn(1)+' 獲勝！'}（${a} : ${b}）</div>`+
+      (isHost?'<div class="row"><button class="main" id="bAgain">再來一局</button></div>':'<div class="mu">等待房主再開一局</div>');
+    if(isHost)$('bAgain').onclick=()=>{S={ph:'lobby',v:S.v+1};$('game').hidden=true;$('setup').hidden=false;push()}
+  }else F.hidden=true}
+setInterval(()=>{if(S&&S.ph==='fight'&&!isHost&&!S.ch[me]&&sent&&myPick!==undefined)send({t:'pk',c:myPick,u:myPick>=0?myUse:''})},1500);
+
+/* ---------- input ---------- */
+const mv=d=>{if(S&&S.ph==='play')send({t:'mv',d})};
+document.querySelectorAll('.pad button').forEach(b=>b.onclick=()=>mv(+b.dataset.d));
+addEventListener('keydown',e=>{const k={ArrowUp:0,ArrowRight:1,ArrowDown:2,ArrowLeft:3}[e.key];
+  if(k!==undefined&&!/INPUT|SELECT/.test(e.target.tagName)){e.preventDefault();mv(k)}});
+</script>
+</body>
+</html>
